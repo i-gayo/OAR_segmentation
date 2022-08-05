@@ -143,8 +143,54 @@ def dice_score(gt_mask, pred_mask):
 
     dice = torch.mean((numerator / denominator))
     
+def iou_score(gt_mask, pred_mask):
+    """
+    IOU metric
+    """
+    numerator = torch.sum(gt_mask*pred_mask, dim=(2,3,4)) 
+    combined_masks = torch.logical_or(gt_mask, pred_mask)
+    denominator = torch.sum(combined_masks, dim= (2,3,4)) + 1e-6
+
+    #combined_masks = gt_mask + pred_mask
+    #combined_masks[combined_masks != 0] = 1:
+    #denominator = torch.sum(combined_masks, (dim = 2,3,4)) + 1e-6
+    #denominator = torch.sum(gt_mask, dim=(2,3,4)) + torch.sum(pred_mask, dim=(2,3,4)) + 1e-6
+
+    iou = torch.mean((numerator / denominator))
+
+    return iou 
+
+
+
 ###### Training scripts ######
-def train(prostate_dataloader, num_epochs = 10):
+def validate(val_dataloader, model):
+
+    # Set to evaluation mode 
+    model.eval()
+    iou_vals_eval = [] 
+    loss_vals_eval = [] 
+
+    for idx, (image, label) in enumerate(val_dataloader):
+        
+        if use_cuda:
+            image, label = image.cuda(), label.cuda()
+
+        with torch.no_grad():
+            output = model(image)
+            loss = dice_loss(label, output) 
+            iou = iou_score(label, output)                
+            
+            loss_vals_eval.append(loss)
+            iou_vals_eval.append(iou)
+    
+    mean_iou = torch.mean(iou_vals_eval)
+    mean_loss = torch.mean(loss_vals_eval)
+
+    return mean_loss, mean_iou 
+    
+
+
+def train(train_dataloader, val_dataloader, num_epochs = 10, use_cuda = False):
     
     """
     A function that performs the training and validation loop 
@@ -155,7 +201,87 @@ def train(prostate_dataloader, num_epochs = 10):
     """
     
     model = UNet_3D(1, 1)
-    loss_fn = dice_loss()
-    optimiser_fn = torch.optim.Adam(model.parameters(), lr=1e-4)
+
+    if use_cuda:
+        model.cuda()
+
+    optimiser = torch.optim.Adam(model.parameters(), lr=1e-4)
+    step = 0 
+    freq_print = 8
+    freq_eval = 4
+    all_loss_train = np.zeros(num_epochs,1)
+    all_iou_train = np.zeros(num_epochs, 1)
+
+    for epoch_no in range(num_epochs):
+        
+        iou_vals = []
+        loss_vals = [] 
+
+        # Initialise training loop
+        for idx, (images, labels) in enumerate(train_dataloader):
+
+            # Move to GPU 
+            if use_cuda:
+                images, labels = images.cuda(), labels.cuda()
+
+            # Training steps 
+            optimiser.zero_grad()
+            pred_masks = model(images)  # Obtain predicted segmentation masks 
+            loss = dice_loss(labels, pred_masks) # Compute the masks 
+            loss.backward() # Backward propagation of gradients with respect to loss 
+            optimiser.step() 
+
+            # Compute metrics for each mini batch and append to statistics for each epoch
+            iou = iou_score(labels, pred_masks)
+            iou_vals.append(iou_vals.item())
+            loss_vals.append(loss.item())
+
+            # Print loss every nth minibatch and dice score 
+            if idx % freq_print == 0: 
+                print(f'Epoch {epoch_no} minibatch {idx} : loss : {loss.item():05f}, IOU score : {iou.item():05f}')
+            
+            
+        # Obtain mean dice loss and IOU over this epoch, save to tensorboard 
+        iou_epoch = torch.mean(torch.tensor(iou_vals))
+        loss_epoch = torch.mean(torch.tensor(loss_vals))
+        print(f'Epoch : {epoch_no} Average loss : {loss_epoch:5f} average IOU {iou_epoch:5f}')
+
+        # Save for all_loss_train
+        all_loss_train[loss_epoch]
+        all_iou_train[iou_epoch]
+
+        # Validate every nth epoch and save every nth mini batch 
+        if epoch_no % 4 == 0: 
+
+            # Set to evaluation mode 
+            model.eval()
+            iou_vals_eval = [] 
+            loss_vals_eval = [] 
+
+            for idx, (image, label) in enumerate(val_dataloader):
+                
+                if use_cuda:
+                    image, label = image.cuda(), label.cuda()
+
+                with torch.no_grad():
+                    output = model(image)
+                    loss = dice_loss(label, output) 
+                    iou = iou_score(label, output)                
+                    
+                    loss_vals_eval.append(loss)
+                    iou_vals_eval.append(iou)
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
