@@ -103,7 +103,7 @@ class Image_dataloader(Dataset):
         mri_vol = np.transpose(self._normalise(read_img(os.path.join(self.mri_folder, patient_name))), [1, 2, 0])
         prostate_mask = np.transpose((read_img(os.path.join(self.prostate_folder, patient_name))), [1, 2, 0])
         rectum_name = patient_name.split('.')[0] + '_rectum.nii.gz'
-        print(rectum_name)
+        #print(rectum_name)
         #rectum_mask = np.transpose(self._normalise(read_img(os.path.join(self.rectum_folder, rectum_name))), [1, 2, 0])
         
         # Return as tensor 
@@ -216,7 +216,7 @@ def train(model, train_dataloader, val_dataloader, num_epochs = 10, use_cuda = F
 
     optimiser = torch.optim.Adam(model.parameters(), lr=1e-4)
     step = 0 
-    freq_print = 8
+    freq_print = 4
     freq_eval = 4
     all_loss_train = np.zeros((num_epochs,1))
     all_iou_train = np.zeros((num_epochs, 1))

@@ -9,7 +9,7 @@ if __name__ == '__main__':
     # TODO - fix dataloader to take in n num of images (30) at a time rather than the whole dataset
     FOLDER_NAME = '/Users/ianijirahmae/Documents/Data_folder'
     train_loader = DataLoader(Image_dataloader(FOLDER_NAME, mode = 'train'), batch_size = 4, shuffle = True)
-    val_loader = DataLoader(Image_dataloader(FOLDER_NAME, mode = 'train'), batch_size = 1)
+    val_loader = DataLoader(Image_dataloader(FOLDER_NAME, mode = 'val'), batch_size = 1)
 
     # Initialising the model 
     model = UNet_3D(1, 1)
@@ -22,4 +22,6 @@ if __name__ == '__main__':
     print('Chicken')
     
 
+for i, (img, label, path) in enumerate(val_loader):
 
+    print(path)    
