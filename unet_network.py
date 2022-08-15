@@ -30,18 +30,18 @@ class UNet_3D(nn.Module):
         self.decoder_3 = UNet_3D._build_conv_block((num_features*4)*2, num_features *4)
         self.upconv_2 = nn.ConvTranspose3d(num_features * 4, num_features * 2, kernel_size = 2, stride = 2)
         self.decoder_2 = UNet_3D._build_conv_block((num_features*2)*2, num_features *2)
-        self.upconv_1 = UNet_3D._build_conv_block(num_features*2 , num_features, kernel_size = 2, stride = 2)
+        self.upconv_1 = nn.ConvTranspose3d(num_features*2 , num_features, kernel_size = 2, stride = 2)
         self.decoder_1 = UNet_3D._build_conv_block(num_features*2, num_features)
 
-        self.final_conv = torch.nn.Cov3d(input_channels = num_features, output_channels = output_channel, kernel_size = 1)
+        self.final_conv = torch.nn.Conv3d(num_features, output_channel, kernel_size = 1)
 
     def forward(self, x):
-        enc1 = self.encode_1(x)
+        enc1 = self.encoder_1(x)
         enc2 = self.encoder_2(self.maxpool_1(enc1))
         enc3 = self.encoder_3(self.maxpool_2(enc2))
         enc4 = self.encoder_4(self.maxpool_3(enc3))
 
-        bottleneck = self.bottle_neck(self.pool4(enc4))
+        bottleneck = self.bottle_neck(self.maxpool_4(enc4))
 
         dec4 = self.upconv_4(bottleneck)
         dec4 = torch.cat((dec4, enc4), dim=1)
@@ -59,7 +59,7 @@ class UNet_3D(nn.Module):
         dec1 = torch.cat((dec1, enc1), dim=1)
         dec1 = self.decoder_1(dec1)
 
-        return torch.sigmoid(self.conv(dec1))
+        return torch.sigmoid(self.final_conv(dec1))
 
     @staticmethod
     def _build_conv_block(input_channel, num_features):
@@ -74,3 +74,8 @@ class UNet_3D(nn.Module):
 
         return conv_block 
 
+    def _centre_crop(encoder_layer, decoder_layer):
+        """
+        A function that centre crops encoder layer to match that of the encoder layer 
+        """
+        pass 

@@ -246,7 +246,7 @@ def train(model, train_dataloader, val_dataloader, num_epochs = 10, use_cuda = F
 
             # Compute metrics for each mini batch and append to statistics for each epoch
             iou = iou_score(labels, pred_masks)
-            iou_vals.append(iou_vals.item())
+            iou_vals.append(iou.item())
             loss_vals.append(loss.item())
 
             # Print loss every nth minibatch and dice score 
@@ -274,7 +274,7 @@ def train(model, train_dataloader, val_dataloader, num_epochs = 10, use_cuda = F
         if epoch_no % freq_eval == 0: 
 
             # Set to evaluation mode 
-            mean_loss, mean_iou = validate(val_dataloader, model, use_cuda = True)
+            mean_loss, mean_iou = validate(val_dataloader, model, use_cuda = use_cuda)
             print(f'Validation loss: {epoch_no} Average loss : {mean_loss:5f} average IOU {mean_iou:5f}')
             all_loss_val.append(mean_loss)
             all_iou_val.append(mean_iou)
@@ -291,7 +291,8 @@ def train(model, train_dataloader, val_dataloader, num_epochs = 10, use_cuda = F
         
                 # Use as new best loss
                 best_loss = mean_loss 
-            
+
+        print('Chicken') 
         
     return all_loss_train, all_loss_val, all_iou_train, all_iou_val 
 
