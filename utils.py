@@ -6,6 +6,7 @@ import os
 from torch.utils.data import Dataset, DataLoader, RandomSampler 
 import SimpleITK as sitk
 from unet_network import UNet_3D
+from torch.utils.tensorboard import SummaryWriter
 
 ###### DATALOADER ######
 class ImageReader:
@@ -160,10 +161,8 @@ def iou_score(gt_mask, pred_mask):
 
     return iou 
 
-
-
 ###### Training scripts ######
-def validate(val_dataloader, model):
+def validate(val_dataloader, model, use_cuda = True):
 
     # Set to evaluation mode 
     model.eval()
@@ -188,9 +187,7 @@ def validate(val_dataloader, model):
 
     return mean_loss, mean_iou 
     
-
-
-def train(train_dataloader, val_dataloader, num_epochs = 10, use_cuda = False):
+def train(train_dataloader, val_dataloader, num_epochs = 10, use_cuda = False, save_folder = 'model_1'):
     
     """
     A function that performs the training and validation loop 
@@ -201,6 +198,8 @@ def train(train_dataloader, val_dataloader, num_epochs = 10, use_cuda = False):
     """
     
     model = UNet_3D(1, 1)
+    writer = SummaryWriter() 
+    os.mkdir(save_folder, exist_ok = True) 
 
     if use_cuda:
         model.cuda()
@@ -211,6 +210,10 @@ def train(train_dataloader, val_dataloader, num_epochs = 10, use_cuda = False):
     freq_eval = 4
     all_loss_train = np.zeros(num_epochs,1)
     all_iou_train = np.zeros(num_epochs, 1)
+    all_loss_val = [] 
+    all_iou_val = []
+    best_loss = np.inf 
+    best_iou = 0 
 
     for epoch_no in range(num_epochs):
         
@@ -247,29 +250,45 @@ def train(train_dataloader, val_dataloader, num_epochs = 10, use_cuda = False):
         print(f'Epoch : {epoch_no} Average loss : {loss_epoch:5f} average IOU {iou_epoch:5f}')
 
         # Save for all_loss_train
-        all_loss_train[loss_epoch]
-        all_iou_train[iou_epoch]
+        all_loss_train[loss_epoch] = loss_epoch
+        all_iou_train[iou_epoch] = iou_epoch 
+        
+        #Tensorboard saving 
+        writer.add_scalar('Loss/train', loss_epoch, epoch_no)
+        writer.add_scalar('IOU/train', iou_epoch, epoch_no)
+    
+        # Save newest model 
+        train_model_path = os.path.join(save_folder, 'train_model.pth')
+        torch.save(model.state_dict(), train_model_path)
 
         # Validate every nth epoch and save every nth mini batch 
-        if epoch_no % 4 == 0: 
+        if epoch_no % freq_eval == 0: 
 
             # Set to evaluation mode 
-            model.eval()
-            iou_vals_eval = [] 
-            loss_vals_eval = [] 
+            mean_loss, mean_iou = validate(val_dataloader, model, use_cuda = True)
+            print(f'Validation loss: {epoch_no} Average loss : {mean_loss:5f} average IOU {mean_iou:5f}')
+            all_loss_val.append(mean_loss)
+            all_iou_val.append(mean_iou)
 
-            for idx, (image, label) in enumerate(val_dataloader):
+            #Tensorboard saving
+            writer.add_scalar('Loss/val', mean_loss, epoch_no)
+            writer.add_scalar('IOU/val', mean_iou, epoch_no)
+
+            if mean_loss < best_loss: 
                 
-                if use_cuda:
-                    image, label = image.cuda(), label.cuda()
+                # Save best model as best validation model 
+                val_model_path = os.path.join(save_folder, 'best_val_model.pth')
+                torch.save(model.state_dict(), val_model_path')
+        
+                # Use as new best loss
+                best_loss = mean_loss 
+            
 
-                with torch.no_grad():
-                    output = model(image)
-                    loss = dice_loss(label, output) 
-                    iou = iou_score(label, output)                
-                    
-                    loss_vals_eval.append(loss)
-                    iou_vals_eval.append(iou)
+
+
+
+            
+
 
 
 
