@@ -7,6 +7,7 @@ from torch.utils.data import Dataset, DataLoader, RandomSampler
 import SimpleITK as sitk
 from unet_network import UNet_3D
 from torch.utils.tensorboard import SummaryWriter
+import h5py 
 
 ###### DATALOADER ######
 class ImageReader:
@@ -122,7 +123,7 @@ class Image_dataloader(Dataset):
         rectum_pos = 0 
         sitk_img_path = os.path.join(self.lesion_folder, patient_name)
 
-        return mri_vol, rectum_mask, lesion_mask, sitk_img_path , rectum_pos, patient_name
+        return mri_vol, rectum_mask, patient_name
 
 ###### LOSS FUNCTIONS, DICE SCORE METRICS ######
 
@@ -162,15 +163,16 @@ def iou_score(gt_mask, pred_mask):
     return iou 
 
 ###### Training scripts ######
-def validate(val_dataloader, model, use_cuda = True):
+def validate(val_dataloader, model, use_cuda = True, save_path = 'model_1'):
 
     # Set to evaluation mode 
     model.eval()
     iou_vals_eval = [] 
     loss_vals_eval = [] 
 
-    for idx, (image, label) in enumerate(val_dataloader):
+    for idx, (image, label, patient_name) in enumerate(val_dataloader):
         
+
         if use_cuda:
             image, label = image.cuda(), label.cuda()
 
@@ -185,7 +187,13 @@ def validate(val_dataloader, model, use_cuda = True):
     mean_iou = torch.mean(iou_vals_eval)
     mean_loss = torch.mean(loss_vals_eval)
 
-    return mean_loss, mean_iou 
+    # Save image, labels and outputs into h5py files
+    img_name = patient_name + '_rectum.nii.gz'
+    img_path = os.path.join(save_path, img_name)
+    sitk.WriteImage(image, img_path)
+
+
+    return mean_loss, mean_iou
     
 def train(train_dataloader, val_dataloader, num_epochs = 10, use_cuda = False, save_folder = 'model_1'):
     
@@ -278,11 +286,13 @@ def train(train_dataloader, val_dataloader, num_epochs = 10, use_cuda = False, s
                 
                 # Save best model as best validation model 
                 val_model_path = os.path.join(save_folder, 'best_val_model.pth')
-                torch.save(model.state_dict(), val_model_path')
+                torch.save(model.state_dict(), val_model_path)
         
                 # Use as new best loss
                 best_loss = mean_loss 
             
+        # Save images
+
 
 
 
