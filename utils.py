@@ -32,41 +32,27 @@ class Image_dataloader(Dataset):
         self.mode = mode
 
         # Obtain list of patient names with multiple lesions 
-        df_dataset = pd.read_csv('./patient_data_multiple_lesions.csv')
+        names_path = os.path.join(folder_name, 'patient_names.csv')
+        df_dataset = pd.read_csv(names_path)
         self.all_file_names = df_dataset['patient_name'].tolist()
-        self.num_lesions = df_dataset[' num_lesions'].tolist()
+       
 
         # Train with all patients 
-        if use_all:
+        size_dataset = len(self.all_file_names)
 
-            size_dataset = len(self.all_file_names)
+        train_len = int(size_dataset * 0.7) 
+        test_len = int(size_dataset * 0.2) 
+        val_len = size_dataset - (train_len + test_len)
+        self.dataset_len = {'train': train_len, 'test' :test_len, 'val' : val_len}
 
-            train_len = int(size_dataset * 0.7) 
-            test_len = int(size_dataset * 0.2) 
-            val_len = size_dataset - (train_len + test_len)
+        # both test and val have simila rnumber of lesions (mean = 2.4 lesions)
+        self.train_names = self.all_file_names[0:train_len]
+        self.val_names = self.all_file_names[train_len:train_len + val_len]
+        self.test_names = self.all_file_names[train_len + val_len:]
 
-            # both test and val have simila rnumber of lesions (mean = 2.4 lesions)
-            self.train_names = self.all_file_names[0:train_len]
-            self.val_names = self.all_file_names[train_len:train_len + val_len]
-            self.test_names = self.all_file_names[train_len + val_len:]
-
-        # Only train with 100 patients, validate with 15 and validate with 30 : all ahve mean num lesions of 2.6
-        else:
-
-            size_dataset = 50
-
-            train_len = int(size_dataset * 0.7) 
-            test_len = int(size_dataset * 0.2) 
-            val_len = size_dataset - (train_len + test_len)
-
-            self.train_names = self.all_file_names[0:105]
-            self.val_names = self.all_file_names[105:120]
-            self.test_names = self.all_file_names[120:150]
-
-        self.dataset_len = {'train' : train_len, 'test': test_len, 'val' : val_len}
 
         # Folder names
-        self.lesion_folder = os.path.join(folder_name, 'lesion')
+        self.prostate_folder = os.path.join(folder_name, 'prostate_mask')
         self.mri_folder = os.path.join(folder_name, 't2w')
         self.rectum_folder = os.path.join(folder_name, 'rectum_mask')
 
@@ -115,15 +101,17 @@ class Image_dataloader(Dataset):
         read_img = ImageReader()
         
         mri_vol = np.transpose(self._normalise(read_img(os.path.join(self.mri_folder, patient_name))), [1, 2, 0])
-        lesion_mask = np.transpose((read_img(os.path.join(self.lesion_folder, patient_name))), [1, 2, 0])
-        rectum_mask = np.transpose(self._normalise(read_img(os.path.join(self.rectum_folder, patient_name))), [1, 2, 0])
+        prostate_mask = np.transpose((read_img(os.path.join(self.prostate_folder, patient_name))), [1, 2, 0])
+        rectum_name = patient_name.split('.')[0] + '_rectum.nii.gz'
+        print(rectum_name)
+        #rectum_mask = np.transpose(self._normalise(read_img(os.path.join(self.rectum_folder, rectum_name))), [1, 2, 0])
         
-        # Get rectum positions
-        #rectum_pos = self._get_rectum_pos(patient_name) 
-        rectum_pos = 0 
-        sitk_img_path = os.path.join(self.lesion_folder, patient_name)
+        # Return as tensor 
+        mri_vol = torch.from_numpy(mri_vol).unsqueeze(0)
+        prostate_mask = torch.from_numpy(prostate_mask).unsqueeze(0)
 
-        return mri_vol, rectum_mask, patient_name
+
+        return mri_vol, prostate_mask, patient_name
 
 ###### LOSS FUNCTIONS, DICE SCORE METRICS ######
 
@@ -195,7 +183,7 @@ def validate(val_dataloader, model, use_cuda = True, save_path = 'model_1'):
 
     return mean_loss, mean_iou
     
-def train(train_dataloader, val_dataloader, num_epochs = 10, use_cuda = False, save_folder = 'model_1'):
+def train(model, train_dataloader, val_dataloader, num_epochs = 10, use_cuda = False, save_folder = 'model_1'):
     
     """
     A function that performs the training and validation loop 
@@ -204,10 +192,9 @@ def train(train_dataloader, val_dataloader, num_epochs = 10, use_cuda = False, s
     :prostate_dataloader: torch dataloader that can load images and masks in
     :num_epochs: (int) Number of epochs to train for 
     """
-    
-    model = UNet_3D(1, 1)
+
     writer = SummaryWriter() 
-    os.mkdir(save_folder, exist_ok = True) 
+    os.makedirs(save_folder, exist_ok = True) 
 
     if use_cuda:
         model.cuda()
@@ -216,8 +203,8 @@ def train(train_dataloader, val_dataloader, num_epochs = 10, use_cuda = False, s
     step = 0 
     freq_print = 8
     freq_eval = 4
-    all_loss_train = np.zeros(num_epochs,1)
-    all_iou_train = np.zeros(num_epochs, 1)
+    all_loss_train = np.zeros((num_epochs,1))
+    all_iou_train = np.zeros((num_epochs, 1))
     all_loss_val = [] 
     all_iou_val = []
     best_loss = np.inf 
@@ -229,7 +216,7 @@ def train(train_dataloader, val_dataloader, num_epochs = 10, use_cuda = False, s
         loss_vals = [] 
 
         # Initialise training loop
-        for idx, (images, labels) in enumerate(train_dataloader):
+        for idx, (images, labels, _) in enumerate(train_dataloader):
 
             # Move to GPU 
             if use_cuda:
@@ -250,7 +237,6 @@ def train(train_dataloader, val_dataloader, num_epochs = 10, use_cuda = False, s
             # Print loss every nth minibatch and dice score 
             if idx % freq_print == 0: 
                 print(f'Epoch {epoch_no} minibatch {idx} : loss : {loss.item():05f}, IOU score : {iou.item():05f}')
-            
             
         # Obtain mean dice loss and IOU over this epoch, save to tensorboard 
         iou_epoch = torch.mean(torch.tensor(iou_vals))
@@ -291,7 +277,9 @@ def train(train_dataloader, val_dataloader, num_epochs = 10, use_cuda = False, s
                 # Use as new best loss
                 best_loss = mean_loss 
             
-        # Save images
+        
+    return all_loss_train, all_loss_val, all_iou_train, all_iou_val 
+
 
 
 
