@@ -108,8 +108,11 @@ class Image_dataloader(Dataset):
         
         # Return as tensor 
         mri_vol = torch.from_numpy(mri_vol).unsqueeze(0)
-        prostate_mask = torch.from_numpy(prostate_mask).unsqueeze(0)
+        prostate_mask = torch.from_numpy(prostate_mask).unsqueeze(0)    
 
+        # Pad tensors from (200,200,96) -> (224, 224, 96) for unet encoder/decoder compatibility 
+        mri_vol = torch.nn.functional.pad(mri_vol, (0, 0, 12, 12, 12, 12))
+        prostate_mask = torch.nn.functional.pad(prostate_mask, (0, 0, 12, 12, 12, 12))
 
         return mri_vol, prostate_mask, patient_name
 
@@ -119,15 +122,22 @@ def dice_loss(gt_mask, pred_mask):
     '''
     y_pred, y_true -> [N, C=1, D, H, W]
     '''
-    numerator = torch.sum(gt_mask*pred_mask, dim=(2,3,4)) * 2
-    denominator = torch.sum(gt_mask, dim=(2,3,4)) + torch.sum(pred_mask, dim=(2,3,4)) + 1e-6
+    # Cropped back to original dimensions 
+    gt_cropped = gt_mask[:,:,12:-12, 12:-12, :]
+    pred_cropped = pred_mask[:,:,12:-12, 12:-12, :]
+
+    numerator = torch.sum(gt_cropped*pred_cropped, dim=(2,3,4)) * 2
+    denominator = torch.sum(gt_cropped, dim=(2,3,4)) + torch.sum(pred_cropped, dim=(2,3,4)) + 1e-6
+
+    dice_loss = torch.mean(1. - (numerator / denominator))
     
-    return torch.mean(1. - (numerator / denominator))
+    return dice_loss
 
 def dice_score(gt_mask, pred_mask):
     """
     Dice score metric 
     """
+
     numerator = torch.sum(gt_mask*pred_mask, dim=(2,3,4)) * 2
     denominator = torch.sum(gt_mask, dim=(2,3,4)) + torch.sum(pred_mask, dim=(2,3,4)) + 1e-6
 
@@ -137,8 +147,13 @@ def iou_score(gt_mask, pred_mask):
     """
     IOU metric
     """
-    numerator = torch.sum(gt_mask*pred_mask, dim=(2,3,4)) 
-    combined_masks = torch.logical_or(gt_mask, pred_mask)
+
+    # CRopped to compute score on original non-padded image 
+    gt_cropped = gt_mask[:,:,12:-12, 12:-12, :]
+    pred_cropped = pred_mask[:,:,12:-12, 12:-12, :]
+
+    numerator = torch.sum(gt_cropped*pred_cropped, dim=(2,3,4)) 
+    combined_masks = torch.logical_or(gt_cropped, pred_cropped)
     denominator = torch.sum(combined_masks, dim= (2,3,4)) + 1e-6
 
     #combined_masks = gt_mask + pred_mask
