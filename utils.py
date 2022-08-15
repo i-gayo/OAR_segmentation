@@ -111,8 +111,8 @@ class Image_dataloader(Dataset):
         prostate_mask = torch.from_numpy(prostate_mask).unsqueeze(0)    
 
         # Pad tensors from (200,200,96) -> (224, 224, 96) for unet encoder/decoder compatibility 
-        mri_vol = torch.nn.functional.pad(mri_vol, (0, 0, 12, 12, 12, 12))
-        prostate_mask = torch.nn.functional.pad(prostate_mask, (0, 0, 12, 12, 12, 12))
+        mri_vol = torch.nn.functional.pad(mri_vol[:, ::2, ::2, ::2], (0, 0, 6, 6,6, 6))
+        prostate_mask = torch.nn.functional.pad(prostate_mask[:, ::2, ::2, ::2], (0, 0, 6, 6, 6, 6))
 
         return mri_vol, prostate_mask, patient_name
 
@@ -184,17 +184,16 @@ def validate(val_dataloader, model, use_cuda = True, save_path = 'model_1'):
             loss = dice_loss(label, output) 
             iou = iou_score(label, output)                
             
-            loss_vals_eval.append(loss)
-            iou_vals_eval.append(iou)
+            loss_vals_eval.append(loss.item())
+            iou_vals_eval.append(iou.item())
     
-    mean_iou = torch.mean(iou_vals_eval)
-    mean_loss = torch.mean(loss_vals_eval)
+    mean_iou = torch.mean(torch.FloatTensor(iou_vals_eval))
+    mean_loss = torch.mean(torch.FloatTensor(loss_vals_eval))
 
     # Save image, labels and outputs into h5py files
-    img_name = patient_name + '_rectum.nii.gz'
+    img_name = patient_name[0].split(".")[0] + '_rectum_PRED.nii.gz'
     img_path = os.path.join(save_path, img_name)
-    sitk.WriteImage(image, img_path)
-
+    sitk.WriteImage(sitk.GetImageFromArray(image.cpu()), img_path)
 
     return mean_loss, mean_iou
     
@@ -259,8 +258,8 @@ def train(model, train_dataloader, val_dataloader, num_epochs = 10, use_cuda = F
         print(f'Epoch : {epoch_no} Average loss : {loss_epoch:5f} average IOU {iou_epoch:5f}')
 
         # Save for all_loss_train
-        all_loss_train[loss_epoch] = loss_epoch
-        all_iou_train[iou_epoch] = iou_epoch 
+        all_loss_train[epoch_no] = loss_epoch
+        all_iou_train[epoch_no] = iou_epoch 
         
         #Tensorboard saving 
         writer.add_scalar('Loss/train', loss_epoch, epoch_no)
