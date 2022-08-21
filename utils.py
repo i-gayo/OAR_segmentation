@@ -40,16 +40,15 @@ class Image_dataloader(Dataset):
         # Train with all patients 
         size_dataset = len(self.all_file_names)
 
-        train_len = int(size_dataset * 0.7) 
-        test_len = int(size_dataset * 0.2) 
-        val_len = size_dataset - (train_len + test_len)
+        train_len = 16
+        test_len = 0
+        val_len = 4
         self.dataset_len = {'train': train_len, 'test' :test_len, 'val' : val_len}
 
         # both test and val have simila rnumber of lesions (mean = 2.4 lesions)
         self.train_names = self.all_file_names[0:train_len]
-        self.val_names = self.all_file_names[train_len:train_len + val_len]
-        self.test_names = self.all_file_names[train_len + val_len:]
-
+        self.val_names = self.all_file_names[train_len:]
+        #self.test_names = self.all_file_names[train_len + val_len:]
 
         # Folder names
         self.prostate_folder = os.path.join(folder_name, 'prostate_mask')
@@ -102,19 +101,21 @@ class Image_dataloader(Dataset):
         
         mri_vol = np.transpose(self._normalise(read_img(os.path.join(self.mri_folder, patient_name))), [1, 2, 0])
         prostate_mask = np.transpose((read_img(os.path.join(self.prostate_folder, patient_name))), [1, 2, 0])
-        rectum_name = patient_name.split('.')[0] + '_rectum.nii.gz'
+        rectum_name = patient_name.split('.')[0] + '.nrrd'
         #print(rectum_name)
-        #rectum_mask = np.transpose(self._normalise(read_img(os.path.join(self.rectum_folder, rectum_name))), [1, 2, 0])
+        rectum_mask = np.transpose(self._normalise(read_img(os.path.join(self.rectum_folder, rectum_name))), [1, 2, 0])
         
         # Return as tensor 
         mri_vol = torch.from_numpy(mri_vol).unsqueeze(0)
-        prostate_mask = torch.from_numpy(prostate_mask).unsqueeze(0)    
+        prostate_mask = torch.from_numpy(prostate_mask).unsqueeze(0) 
+        rectum_mask =    torch.from_numpy(rectum_mask).unsqueeze(0) 
 
         # Pad tensors from (200,200,96) -> (224, 224, 96) for unet encoder/decoder compatibility 
         mri_vol = torch.nn.functional.pad(mri_vol[:, ::2, ::2, ::2], (0, 0, 6, 6,6, 6))
         prostate_mask = torch.nn.functional.pad(prostate_mask[:, ::2, ::2, ::2], (0, 0, 6, 6, 6, 6))
+        rectum_mask = torch.nn.functional.pad(rectum_mask[:, ::2, ::2, ::2], (0, 0, 6, 6, 6, 6))
 
-        return mri_vol, prostate_mask, patient_name
+        return mri_vol, rectum_mask, patient_name
 
 ###### LOSS FUNCTIONS, DICE SCORE METRICS ######
 
@@ -166,7 +167,7 @@ def iou_score(gt_mask, pred_mask):
     return iou 
 
 ###### Training scripts ######
-def validate(val_dataloader, model, use_cuda = True, save_path = 'model_1'):
+def validate(val_dataloader, model, use_cuda = True, save_path = 'model_1', save_images = False):
 
     # Set to evaluation mode 
     model.eval()
@@ -186,14 +187,17 @@ def validate(val_dataloader, model, use_cuda = True, save_path = 'model_1'):
             
             loss_vals_eval.append(loss.item())
             iou_vals_eval.append(iou.item())
+
+        if save_images:
+            # Save image, labels and outputs into h5py files
+            img_name = patient_name[0].split(".")[0] + '_rectum_PRED.nrrd'
+            img_path = os.path.join(save_path, img_name)
+            sitk.WriteImage(sitk.GetImageFromArray(image.cpu()), img_path)
     
     mean_iou = torch.mean(torch.FloatTensor(iou_vals_eval))
     mean_loss = torch.mean(torch.FloatTensor(loss_vals_eval))
 
-    # Save image, labels and outputs into h5py files
-    img_name = patient_name[0].split(".")[0] + '_rectum_PRED.nii.gz'
-    img_path = os.path.join(save_path, img_name)
-    sitk.WriteImage(sitk.GetImageFromArray(image.cpu()), img_path)
+
 
     return mean_loss, mean_iou
     
@@ -208,12 +212,16 @@ def train(model, train_dataloader, val_dataloader, num_epochs = 10, use_cuda = F
     """
 
     writer = SummaryWriter() 
-    os.makedirs(save_folder, exist_ok = True) 
+    current_dir = os.getcwd()
+    train_folder = os.path.join(current_dir, save_folder)
+    os.makedirs(train_folder, exist_ok = True) 
+    print(f'train folder path : {train_folder}')
+    writer = SummaryWriter(os.path.join(train_folder, 'runs')) 
 
     if use_cuda:
         model.cuda()
 
-    optimiser = torch.optim.Adam(model.parameters(), lr=1e-4)
+    optimiser = torch.optim.Adam(model.parameters(), lr=1e-05)
     step = 0 
     freq_print = 4
     freq_eval = 4
@@ -223,6 +231,17 @@ def train(model, train_dataloader, val_dataloader, num_epochs = 10, use_cuda = F
     all_iou_val = []
     best_loss = np.inf 
     best_iou = 0 
+    
+    csv_train_path = os.path.join(train_folder, 'train_loss.csv')
+    csv_val_path = os.path.join(train_folder, 'val_loss.csv')
+
+    with open(csv_train_path, 'w') as fp:
+        fp.write('''epoch_num, loss, iou''')
+        fp.write('\n')
+
+    with open(csv_val_path, 'w') as fp:
+        fp.write('''epoch_num, loss, iou''')
+        fp.write('\n')
 
     for epoch_no in range(num_epochs):
         
@@ -249,13 +268,17 @@ def train(model, train_dataloader, val_dataloader, num_epochs = 10, use_cuda = F
             loss_vals.append(loss.item())
 
             # Print loss every nth minibatch and dice score 
-            if idx % freq_print == 0: 
-                print(f'Epoch {epoch_no} minibatch {idx} : loss : {loss.item():05f}, IOU score : {iou.item():05f}')
+            #if idx % freq_print == 0: 
+            #    print(f'Epoch {epoch_no} minibatch {idx} : loss : {loss.item():05f}, IOU score : {iou.item():05f}')
             
         # Obtain mean dice loss and IOU over this epoch, save to tensorboard 
         iou_epoch = torch.mean(torch.tensor(iou_vals))
         loss_epoch = torch.mean(torch.tensor(loss_vals))
-        print(f'Epoch : {epoch_no} Average loss : {loss_epoch:5f} average IOU {iou_epoch:5f}')
+        print(f'\n Epoch : {epoch_no} Average loss : {loss_epoch:5f} average IOU {iou_epoch:5f}')
+
+        with open(csv_train_path, 'a') as fp: 
+            loss_points = np.stack([epoch_no, loss_epoch, iou_epoch]).reshape(1,-1)
+            np.savetxt(fp, loss_points, '%s', delimiter =",")
 
         # Save for all_loss_train
         all_loss_train[epoch_no] = loss_epoch
@@ -266,17 +289,26 @@ def train(model, train_dataloader, val_dataloader, num_epochs = 10, use_cuda = F
         writer.add_scalar('IOU/train', iou_epoch, epoch_no)
     
         # Save newest model 
-        train_model_path = os.path.join(save_folder, 'train_model.pth')
+        train_model_path = os.path.join(train_folder, 'train_model.pth')
         torch.save(model.state_dict(), train_model_path)
 
         # Validate every nth epoch and save every nth mini batch 
         if epoch_no % freq_eval == 0: 
 
             # Set to evaluation mode 
-            mean_loss, mean_iou = validate(val_dataloader, model, use_cuda = use_cuda)
-            print(f'Validation loss: {epoch_no} Average loss : {mean_loss:5f} average IOU {mean_iou:5f}')
+            if epoch_no % 100 == 0: 
+                save_img = True
+            else:
+                save_img = False 
+                
+            mean_loss, mean_iou = validate(val_dataloader, model, use_cuda = use_cuda, save_path = train_folder, save_images = save_img)
+            print(f'Validation loss for epoch {epoch_no} Average loss : {mean_loss:5f} average IOU {mean_iou:5f}')
             all_loss_val.append(mean_loss)
             all_iou_val.append(mean_iou)
+            
+            with open(csv_val_path, 'a') as fp: 
+                loss_points = np.stack([epoch_no, mean_loss, mean_iou]).reshape(1,-1)
+                np.savetxt(fp, loss_points, '%s', delimiter =",")
 
             #Tensorboard saving
             writer.add_scalar('Loss/val', mean_loss, epoch_no)
@@ -285,14 +317,22 @@ def train(model, train_dataloader, val_dataloader, num_epochs = 10, use_cuda = F
             if mean_loss < best_loss: 
                 
                 # Save best model as best validation model 
-                val_model_path = os.path.join(save_folder, 'best_val_model.pth')
+                val_model_path = os.path.join(train_folder, 'best_val_model.pth')
                 torch.save(model.state_dict(), val_model_path)
         
                 # Use as new best loss
                 best_loss = mean_loss 
-
-        print('Chicken') 
         
+        elif epoch_no == 0: 
+            with open(csv_val_path, 'a') as fp: 
+                loss_points = np.stack([epoch_no, 1, 0]).reshape(1,-1)
+                np.savetxt(fp, loss_points, '%s', delimiter =",")
+        else:
+            with open(csv_val_path, 'a') as fp: 
+                loss_points = np.stack([epoch_no, all_loss_val[-1], all_iou_val[-1]]).reshape(1,-1)
+                np.savetxt(fp, loss_points, '%s', delimiter =",")
+
+        #print('Chicken') 
     return all_loss_train, all_loss_val, all_iou_train, all_iou_val 
 
 
