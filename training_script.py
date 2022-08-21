@@ -15,9 +15,9 @@ if __name__ == '__main__':
     model = UNet_3D(1, 1)
 
     # Initialising the training procedure 
-    experiment_name = 'baseline'
+    experiment_name = 'baseline_experiment'
     train_loss, val_loss, train_iou, val_iou = train(model, train_loader, val_loader, \
-        num_epochs = 10, use_cuda = True, save_folder = experiment_name)
+        num_epochs = 10000, use_cuda = True, save_folder = experiment_name)
 
     print('Chicken')
     
