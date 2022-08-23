@@ -8,6 +8,22 @@ import SimpleITK as sitk
 from unet_network import UNet_3D
 from torch.utils.tensorboard import SummaryWriter
 import h5py 
+from torchvision.transforms import RandomAffine 
+import random
+
+class AffineTransform :
+    """Rotate by one of the given angles."""
+
+    def __init__(self, angle, translate, scale, shear):
+        self.angle = angle
+        self.translate = translate
+        self.scale = scale 
+        self.shear = shear 
+
+    def __call__(self, x):
+        return RandomAffine(degrees = self.angle, translate = self.translate, scale = self.scale, shear = self.shear)
+
+#affine_transform = AffineTransform([5, 0.1, 0, 3])
 
 ###### DATALOADER ######
 class ImageReader:
@@ -26,7 +42,7 @@ class ImageReader:
 
 class Image_dataloader(Dataset):
 
-    def __init__(self, folder_name, mode = 'train', use_all = False):
+    def __init__(self, folder_name, mode = 'train', use_all = False, augment = False):
         
         self.folder_name = folder_name
         self.mode = mode
@@ -35,7 +51,11 @@ class Image_dataloader(Dataset):
         names_path = os.path.join(folder_name, 'patient_names.csv')
         df_dataset = pd.read_csv(names_path)
         self.all_file_names = df_dataset['patient_name'].tolist()
-       
+
+        if augment:
+            self.transform = AffineTransform(5, 0.1, 0, 3)
+        else:
+            self.transform = None
 
         # Train with all patients 
         size_dataset = len(self.all_file_names)
@@ -78,6 +98,19 @@ class Image_dataloader(Dataset):
 
         return normalised_img.astype(np.float32)
 
+    def apply_augmentation(self, image, label):
+
+        """
+        Applies augmentation ONLY if probability > 0.4 
+        """
+
+        if random.random() > 0.4:
+            transform_affine = RandomAffine(5, (0.1,0.1), scale = (0.95,1.05), shear = None)
+            image = transform_affine(image)
+            label = transform_affine(label)
+        
+        return image, label
+
     def __len__(self):
         return self.dataset_len[self.mode]
  
@@ -115,7 +148,11 @@ class Image_dataloader(Dataset):
         prostate_mask = torch.nn.functional.pad(prostate_mask[:, ::2, ::2, ::2], (0, 0, 6, 6, 6, 6))
         rectum_mask = torch.nn.functional.pad(rectum_mask[:, ::2, ::2, ::2], (0, 0, 6, 6, 6, 6))
 
+        if self.transform != None: 
+            mri_vol, rectum_mask = self.apply_augmentation(mri_vol, rectum_mask)
+
         return mri_vol, rectum_mask, patient_name
+
 
 ###### LOSS FUNCTIONS, DICE SCORE METRICS ######
 
